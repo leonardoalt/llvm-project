@@ -744,6 +744,10 @@ class UnaryW_r<bits<12> imm12, bits<3> funct3, string opcodestr>
 // Instructions
 //===----------------------------------------------------------------------===//
 
+// Standard 32-bit RV32I instructions, disabled when XRegs1024 is active
+// (replaced by 64-bit versions in RISCVInstrInfoXRegs1024.td)
+let Predicates = [NotHasVendorXRegs1024] in {
+
 let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
 let isReMaterializable = 1, isAsCheapAsAMove = 1,
     IsSignExtendingOpW = 1 in
@@ -828,6 +832,9 @@ def OR   : ALU_rr<0b0000000, 0b110, "or", Commutable=1>,
 def AND  : ALU_rr<0b0000000, 0b111, "and", Commutable=1>,
            Sched<[WriteIALU, ReadIALU, ReadIALU]>;
 
+} // Predicates = [NotHasVendorXRegs1024]
+
+let Predicates = [NotHasVendorXRegs1024] in {
 let hasSideEffects = 1, mayLoad = 0, mayStore = 0 in {
 def FENCE : RVInstI<0b000, OPC_MISC_MEM, (outs),
                     (ins fencearg:$pred, fencearg:$succ),
@@ -876,6 +883,7 @@ def UNIMP : RVInstI<0b001, OPC_SYSTEM, (outs), (ins), "unimp", "">,
   let rd = 0;
   let imm12 = 0b110000000000;
 }
+} // Predicates = [NotHasVendorXRegs1024]
 
 } // hasSideEffects = 1, mayLoad = 0, mayStore = 0
 
@@ -2407,6 +2415,7 @@ include "RISCVInstrInfoXRivos.td"
 include "RISCVInstrInfoXAndes.td"
 include "RISCVInstrInfoXSpacemiT.td"
 include "RISCVInstrInfoXAIF.td"
+include "RISCVInstrInfoXRegs1024.td"
 
 //===----------------------------------------------------------------------===//
 // Global ISel
