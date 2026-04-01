@@ -196,7 +196,17 @@ void RISCVMCCodeEmitter::expandFunctionCall(const MCInst &MI,
   // Emit AUIPC Ra, Func with R_RISCV_CALL relocation type.
   TmpInst = MCInstBuilder(RISCV::AUIPC).addReg(Ra).addExpr(CallExpr);
   Binary = getBinaryCodeForInstr(TmpInst, Fixups, STI);
-  support::endian::write(CB, Binary, llvm::endianness::little);
+  if (STI.hasFeature(RISCV::FeatureVendorXRegs1024)) {
+    // Re-encode as 64-bit: replace opcode with 0x3F marker
+    uint32_t Lo = (Binary & ~0x7Fu) | 0x3F;
+    uint32_t RaEnc = Ctx.getRegisterInfo()->getEncodingValue(Ra);
+    Lo = (Lo & ~(0x1F << 7)) | ((RaEnc & 0x1F) << 7);
+    support::endian::write(CB, Lo, llvm::endianness::little);
+    uint32_t Hi = (0x17u << 10) | (((RaEnc >> 5) & 0x1F) << 17);
+    support::endian::write(CB, Hi, llvm::endianness::little);
+  } else {
+    support::endian::write(CB, Binary, llvm::endianness::little);
+  }
 
   if (MI.getOpcode() == RISCV::PseudoTAIL ||
       MI.getOpcode() == RISCV::PseudoJump)
@@ -206,7 +216,22 @@ void RISCVMCCodeEmitter::expandFunctionCall(const MCInst &MI,
     // Emit JALR Ra, Ra, 0
     TmpInst = MCInstBuilder(RISCV::JALR).addReg(Ra).addReg(Ra).addImm(0);
   Binary = getBinaryCodeForInstr(TmpInst, Fixups, STI);
-  support::endian::write(CB, Binary, llvm::endianness::little);
+  if (STI.hasFeature(RISCV::FeatureVendorXRegs1024)) {
+    MCRegister Rd = TmpInst.getOperand(0).getReg();
+    MCRegister Rs1 = TmpInst.getOperand(1).getReg();
+    uint32_t RdEnc = Ctx.getRegisterInfo()->getEncodingValue(Rd);
+    uint32_t Rs1Enc = Ctx.getRegisterInfo()->getEncodingValue(Rs1);
+    uint32_t Lo = (Binary & ~0x7Fu) | 0x3F;
+    Lo = (Lo & ~(0x1F << 7)) | ((RdEnc & 0x1F) << 7);
+    Lo = (Lo & ~(0x1F << 15)) | ((Rs1Enc & 0x1F) << 15);
+    support::endian::write(CB, Lo, llvm::endianness::little);
+    uint32_t Hi = (0x67u << 10);
+    Hi |= ((RdEnc >> 5) & 0x1F) << 17;
+    Hi |= ((Rs1Enc >> 5) & 0x1F) << 22;
+    support::endian::write(CB, Hi, llvm::endianness::little);
+  } else {
+    support::endian::write(CB, Binary, llvm::endianness::little);
+  }
 }
 
 void RISCVMCCodeEmitter::expandTLSDESCCall(const MCInst &MI,
@@ -440,6 +465,17 @@ void RISCVMCCodeEmitter::encodeInstruction(const MCInst &MI,
   case RISCV::PseudoJump:
     expandFunctionCall(MI, CB, Fixups, STI);
     MCNumEmitted += 2;
+    // For XRegs1024: pad each 4-byte instruction to 8 bytes so the call
+    // sequence matches the 64-bit instruction spacing
+    if (STI.hasFeature(RISCV::FeatureVendorXRegs1024)) {
+      // The expandFunctionCall emitted 2 × 4-byte instructions (AUIPC + JALR).
+      // We need to pad each to 8 bytes. Insert 4 bytes of padding after each.
+      // This is hacky but maintains consistent 8-byte instruction spacing.
+      // The padding bytes (0x00000000) will be handled as the HIGH word of
+      // a 64-bit instruction by the transpiler.
+      // Actually, we can't easily insert padding here because the bytes are
+      // already written. Just accept the 32-bit call for now.
+    }
     return;
   case RISCV::PseudoAddTPRel:
     expandAddTPRel(MI, CB, Fixups, STI);
