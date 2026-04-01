@@ -11,26 +11,26 @@
 //===----------------------------------------------------------------------===//
 
 let Namespace = "RISCV" in {
-class RISCVReg<bits<5> Enc, string n, list<string> alt = []> : Register<n> {
-  let HWEncoding{4-0} = Enc;
+class RISCVReg<bits<10> Enc, string n, list<string> alt = []> : Register<n> {
+  let HWEncoding{9-0} = Enc;
   let AltNames = alt;
 }
 
-class RISCVRegWithSubRegs<bits<5> Enc, string n, list<Register> subregs,
+class RISCVRegWithSubRegs<bits<10> Enc, string n, list<Register> subregs,
                           list<string> alt = []>
       : RegisterWithSubRegs<n, subregs> {
-  let HWEncoding{4-0} = Enc;
+  let HWEncoding{9-0} = Enc;
   let AltNames = alt;
 }
 
-class RISCVReg16<bits<5> Enc, string n, list<string> alt = []> : Register<n> {
-  let HWEncoding{4-0} = Enc;
+class RISCVReg16<bits<10> Enc, string n, list<string> alt = []> : Register<n> {
+  let HWEncoding{9-0} = Enc;
   let AltNames = alt;
 }
 
 def sub_16 : SubRegIndex<16>;
 class RISCVReg32<RISCVReg16 subreg>
-  : RISCVRegWithSubRegs<subreg.HWEncoding{4-0}, subreg.AsmName, [subreg],
+  : RISCVRegWithSubRegs<subreg.HWEncoding{9-0}, subreg.AsmName, [subreg],
                         subreg.AltNames> {
   let SubRegIndices = [sub_16];
 }
@@ -40,14 +40,14 @@ class RISCVReg32<RISCVReg16 subreg>
 // from a RISCVReg16/RISCVReg32 to the equivalent RISCVReg64 when appropriate.
 def sub_32 : SubRegIndex<32>;
 class RISCVReg64<RISCVReg32 subreg>
-  : RISCVRegWithSubRegs<subreg.HWEncoding{4-0}, subreg.AsmName, [subreg],
+  : RISCVRegWithSubRegs<subreg.HWEncoding{9-0}, subreg.AsmName, [subreg],
                         subreg.AltNames> {
   let SubRegIndices = [sub_32];
 }
 
 def sub_64 : SubRegIndex<64>;
 class RISCVReg128<RISCVReg64 subreg>
-    : RISCVRegWithSubRegs<subreg.HWEncoding{4-0}, subreg.AsmName, [subreg],
+    : RISCVRegWithSubRegs<subreg.HWEncoding{9-0}, subreg.AsmName, [subreg],
                           subreg.AltNames> {
   let SubRegIndices = [sub_64];
 }
@@ -59,7 +59,7 @@ def sub_cap_addr : SubRegIndex<32> {
       SubRegRangeByHwMode<[RV32, RV64], [SubRegRange<32>, SubRegRange<64>]>;
 }
 class RISCVCapReg<RISCVRegWithSubRegs subreg, string n, list<string> alt = []>
-    : RISCVRegWithSubRegs<subreg.HWEncoding{4 -0}, n, [subreg], alt> {
+    : RISCVRegWithSubRegs<subreg.HWEncoding{9 -0}, n, [subreg], alt> {
   let SubRegIndices = [sub_cap_addr];
 }
 
@@ -264,6 +264,17 @@ let RegAltNameIndices = [ABIRegAltName] in {
   }
 }
 
+//===----------------------------------------------------------------------===//
+// Extended GPRs for XRegs1024 extension (X32-X1023)
+//===----------------------------------------------------------------------===//
+// These are simple registers without sub-register hierarchy.
+// For the zkVM experiment, we only need RV32I so sub-registers are not needed.
+let Namespace = "RISCV" in {
+  foreach i = 32...1023 in {
+    def X#i : RISCVReg<i, "x"#i>, DwarfRegNum<[i]>;
+  }
+}
+
 def XLenVT : ValueTypeByHwMode<[RV32, RV64],
                                [i32,  i64]>;
 defvar XLenPairVT = untyped;
@@ -308,9 +319,15 @@ class GPRRegisterClass<dag regList>
 
 // The order of registers represents the preferred allocation sequence.
 // Registers are listed in the order caller-save, callee-save, specials.
+// The GPR register class now includes all 1024 registers (X0-X1023).
+// When XRegs1024 is NOT active, X32-X1023 are marked as reserved in
+// RISCVRegisterInfo::getReservedRegs(), effectively limiting to 32 registers.
+// Allocation order: extended args/temps first (preferred when XRegs1024),
+// then standard caller-save, callee-save, specials last.
 def GPR : GPRRegisterClass<(add (sequence "X%u", 10, 17),
                                 (sequence "X%u", 5, 7),
                                 (sequence "X%u", 28, 31),
+                                (sequence "X%u", 32, 1023),
                                 (sequence "X%u", 8, 9),
                                 (sequence "X%u", 18, 27),
                                 (sequence "X%u", 0, 4))>;
@@ -986,7 +1003,7 @@ let RegInfos = XLenRI in {
 
 def sub_128 : SubRegIndex<128>;
 class RISCVReg256<RISCVReg128 subreg> :
-  RISCVRegWithSubRegs<subreg.HWEncoding{4-0}, subreg.AsmName, [subreg],
+  RISCVRegWithSubRegs<subreg.HWEncoding{9-0}, subreg.AsmName, [subreg],
                       subreg.AltNames> {
   let SubRegIndices = [sub_128];
 }

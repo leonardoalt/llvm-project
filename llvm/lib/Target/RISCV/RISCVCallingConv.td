@@ -39,6 +39,11 @@ def CSR_ILP32F_LP64F_V
 def CSR_ILP32D_LP64D_V
     : CalleeSavedRegs<(add CSR_ILP32D_LP64D, CSR_V)>;
 
+// XRegs1024: no callee-saved registers — everything is caller-saved.
+// In a zkVM there are no interrupts or context switches, so callees can
+// freely use any register.
+def CSR_XRegs1024 : CalleeSavedRegs<(add)>;
+
 // Needed for implementation of RISCVRegisterInfo::getNoPreservedMask()
 def CSR_NoRegs : CalleeSavedRegs<(add)>;
 

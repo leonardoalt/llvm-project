@@ -39,6 +39,9 @@ static cl::opt<bool>
 
 static_assert(RISCV::X1 == RISCV::X0 + 1, "Register list not consecutive");
 static_assert(RISCV::X31 == RISCV::X0 + 31, "Register list not consecutive");
+// Extended registers X32-X1023 are defined via foreach and may not be
+// contiguous with X0-X31 in the enum (they're in a separate foreach block).
+// We verify X32 and X1023 exist but don't assert contiguity with X0-X31.
 static_assert(RISCV::F1_H == RISCV::F0_H + 1, "Register list not consecutive");
 static_assert(RISCV::F31_H == RISCV::F0_H + 31,
               "Register list not consecutive");
@@ -66,6 +69,9 @@ RISCVRegisterInfo::getIPRACSRegs(const MachineFunction *MF) const {
 const MCPhysReg *
 RISCVRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   auto &Subtarget = MF->getSubtarget<RISCVSubtarget>();
+  // XRegs1024: no callee-saved registers (everything is caller-saved)
+  if (Subtarget.hasVendorXRegs1024())
+    return CSR_XRegs1024_SaveList;
   if (MF->getFunction().getCallingConv() == CallingConv::GHC)
     return CSR_NoRegs_SaveList;
   if (MF->getFunction().getCallingConv() == CallingConv::PreserveMost)
@@ -137,8 +143,11 @@ BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
 
   // Use markSuperRegs to ensure any register aliases are also reserved
   markSuperRegs(Reserved, RISCV::X2_H); // sp
-  markSuperRegs(Reserved, RISCV::X3_H); // gp
-  markSuperRegs(Reserved, RISCV::X4_H); // tp
+  // For XRegs1024, don't reserve gp/tp — they're not needed in zkVM
+  if (!Subtarget.hasVendorXRegs1024()) {
+    markSuperRegs(Reserved, RISCV::X3_H); // gp
+    markSuperRegs(Reserved, RISCV::X4_H); // tp
+  }
   if (TFI->hasFP(MF))
     markSuperRegs(Reserved, RISCV::X8_H); // fp
   // Reserve the base register if we need to realign the stack and allocate
@@ -154,6 +163,15 @@ BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   if (Subtarget.hasStdExtE())
     for (MCPhysReg Reg = RISCV::X16_H; Reg <= RISCV::X31_H; Reg++)
       markSuperRegs(Reserved, Reg);
+
+  // Reserve extended registers X32-X1023 when XRegs1024 is not active.
+  // When XRegs1024 IS active, all 1024 GPRs are available to the allocator.
+  if (!Subtarget.hasVendorXRegs1024()) {
+    for (MCPhysReg Reg : RISCV::GPRRegClass) {
+      if (getEncodingValue(Reg) >= 32)
+        Reserved.set(Reg);
+    }
+  }
 
   // V registers for code generation. We handle them manually.
   markSuperRegs(Reserved, RISCV::VL);

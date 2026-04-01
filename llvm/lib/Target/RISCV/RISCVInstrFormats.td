@@ -562,6 +562,166 @@ class RVInstJ<RISCVOpcode opcode, dag outs, dag ins, string opcodestr,
 }
 
 //===----------------------------------------------------------------------===//
+// 64-bit Extended Instruction Formats for XRegs1024
+//===----------------------------------------------------------------------===//
+// These formats use 10-bit register fields and a 64-bit instruction word.
+// The low 7 bits are 0b0111111 (64-bit length marker per RISC-V spec).
+//
+// R-type 64-bit layout:
+//   [63:57] funct7  [56:50] reserved  [49:40] rs2  [39:30] rs1
+//   [29:27] funct3  [26:17] rd  [16:10] opcode  [9:7] reserved  [6:0] 0111111
+
+class RVInstR64X<bits<7> funct7, bits<3> funct3, RISCVOpcode opcode, dag outs,
+                 dag ins, string opcodestr, string argstr>
+    : RVInst64<outs, ins, opcodestr, argstr, [], InstFormatR> {
+  bits<10> rs2;
+  bits<10> rs1;
+  bits<10> rd;
+
+  let Inst{63-57} = funct7;
+  let Inst{56-50} = 0;         // reserved
+  let Inst{49-40} = rs2;
+  let Inst{39-30} = rs1;
+  let Inst{29-27} = funct3;
+  let Inst{26-17} = rd;
+  let Inst{16-10} = opcode.Value;
+  let Inst{9-7}   = 0;         // reserved
+  let Inst{6-0}   = 0b0111111; // 64-bit length marker
+}
+
+// I-type 64-bit layout:
+//   [63:52] imm12  [51:50] reserved  [49:40] (unused/rs2 slot)  [39:30] rs1
+//   [29:27] funct3  [26:17] rd  [16:10] opcode  [9:7] reserved  [6:0] 0111111
+
+class RVInstI64X<bits<3> funct3, RISCVOpcode opcode, dag outs, dag ins,
+                 string opcodestr, string argstr>
+    : RVInst64<outs, ins, opcodestr, argstr, [], InstFormatI> {
+  bits<12> imm12;
+  bits<10> rs1;
+  bits<10> rd;
+
+  let Inst{63-52} = imm12;
+  let Inst{51-50} = 0;         // reserved
+  let Inst{49-40} = 0;         // unused (rs2 slot, keeps alignment)
+  let Inst{39-30} = rs1;
+  let Inst{29-27} = funct3;
+  let Inst{26-17} = rd;
+  let Inst{16-10} = opcode.Value;
+  let Inst{9-7}   = 0;
+  let Inst{6-0}   = 0b0111111;
+}
+
+// I-type 64-bit shift variant (shamt in imm field)
+class RVInstIShift64X<bits<5> imm11_7, bits<3> funct3, RISCVOpcode opcode,
+                      dag outs, dag ins, string opcodestr, string argstr>
+    : RVInst64<outs, ins, opcodestr, argstr, [], InstFormatI> {
+  bits<6> shamt;
+  bits<10> rs1;
+  bits<10> rd;
+
+  let Inst{63-59} = imm11_7;
+  let Inst{58}    = 0;
+  let Inst{57-52} = shamt;
+  let Inst{51-50} = 0;
+  let Inst{49-40} = 0;
+  let Inst{39-30} = rs1;
+  let Inst{29-27} = funct3;
+  let Inst{26-17} = rd;
+  let Inst{16-10} = opcode.Value;
+  let Inst{9-7}   = 0;
+  let Inst{6-0}   = 0b0111111;
+}
+
+// S-type 64-bit layout (stores):
+//   [63:57] imm[11:5]  [56:50] reserved  [49:40] rs2  [39:30] rs1
+//   [29:27] funct3  [26:22] imm[4:0]  [21:17] reserved  [16:10] opcode
+//   [9:7] reserved  [6:0] 0111111
+
+class RVInstS64X<bits<3> funct3, RISCVOpcode opcode, dag outs, dag ins,
+                 string opcodestr, string argstr>
+    : RVInst64<outs, ins, opcodestr, argstr, [], InstFormatS> {
+  bits<12> imm12;
+  bits<10> rs2;
+  bits<10> rs1;
+
+  let Inst{63-57} = imm12{11-5};
+  let Inst{56-50} = 0;         // reserved
+  let Inst{49-40} = rs2;
+  let Inst{39-30} = rs1;
+  let Inst{29-27} = funct3;
+  let Inst{26-22} = imm12{4-0};
+  let Inst{21-17} = 0;         // reserved (rd slot)
+  let Inst{16-10} = opcode.Value;
+  let Inst{9-7}   = 0;
+  let Inst{6-0}   = 0b0111111;
+}
+
+// B-type 64-bit layout (branches):
+//   [63] imm[12]  [62:57] imm[10:5]  [56:50] reserved  [49:40] rs2
+//   [39:30] rs1  [29:27] funct3  [26:23] imm[4:1]  [22] imm[11]
+//   [21:17] reserved  [16:10] opcode  [9:7] reserved  [6:0] 0111111
+
+class RVInstB64X<bits<3> funct3, RISCVOpcode opcode, dag outs, dag ins,
+                 string opcodestr, string argstr>
+    : RVInst64<outs, ins, opcodestr, argstr, [], InstFormatB> {
+  bits<12> imm12;
+  bits<10> rs2;
+  bits<10> rs1;
+
+  let Inst{63}    = imm12{11};
+  let Inst{62-57} = imm12{9-4};
+  let Inst{56-50} = 0;         // reserved
+  let Inst{49-40} = rs2;
+  let Inst{39-30} = rs1;
+  let Inst{29-27} = funct3;
+  let Inst{26-23} = imm12{3-0};
+  let Inst{22}    = imm12{10};
+  let Inst{21-17} = 0;
+  let Inst{16-10} = opcode.Value;
+  let Inst{9-7}   = 0;
+  let Inst{6-0}   = 0b0111111;
+}
+
+// U-type 64-bit layout (LUI, AUIPC):
+//   [63:47] reserved  [46:27] imm20  [26:17] rd
+//   [16:10] opcode  [9:7] reserved  [6:0] 0111111
+
+class RVInstU64X<RISCVOpcode opcode, dag outs, dag ins, string opcodestr,
+                 string argstr>
+    : RVInst64<outs, ins, opcodestr, argstr, [], InstFormatU> {
+  bits<20> imm20;
+  bits<10> rd;
+
+  let Inst{63-47} = 0;         // reserved
+  let Inst{46-27} = imm20;
+  let Inst{26-17} = rd;
+  let Inst{16-10} = opcode.Value;
+  let Inst{9-7}   = 0;
+  let Inst{6-0}   = 0b0111111;
+}
+
+// J-type 64-bit layout (JAL):
+//   [63:47] reserved  [46:27] imm20 (shuffled)  [26:17] rd
+//   [16:10] opcode  [9:7] reserved  [6:0] 0111111
+
+class RVInstJ64X<RISCVOpcode opcode, dag outs, dag ins, string opcodestr,
+                 string argstr>
+    : RVInst64<outs, ins, opcodestr, argstr, [], InstFormatJ> {
+  bits<20> imm20;
+  bits<10> rd;
+
+  let Inst{63-47} = 0;         // reserved
+  let Inst{46}    = imm20{19};
+  let Inst{45-36} = imm20{9-0};
+  let Inst{35}    = imm20{10};
+  let Inst{34-27} = imm20{18-11};
+  let Inst{26-17} = rd;
+  let Inst{16-10} = opcode.Value;
+  let Inst{9-7}   = 0;
+  let Inst{6-0}   = 0b0111111;
+}
+
+//===----------------------------------------------------------------------===//
 // Instruction classes for .insn directives
 //===----------------------------------------------------------------------===//
 

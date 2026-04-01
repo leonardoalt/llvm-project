@@ -1142,6 +1142,15 @@ def HasStdExtY : Predicate<"Subtarget->hasStdExtY()">,
 
 // Ventana Extensions
 
+// RISCV-X: Extended 1024 GPR register file with 64-bit instruction encoding
+// for zkVM targets where register spills are expensive.
+def FeatureVendorXRegs1024
+    : RISCVExtension<0, 1, "Extended 1024 GPR register file with 64-bit encoding">;
+def HasVendorXRegs1024 : Predicate<"Subtarget->hasVendorXRegs1024()">,
+                         AssemblerPredicate<(all_of FeatureVendorXRegs1024),
+                             "'XRegs1024' (Extended 1024 GPR register file)">;
+def NotHasVendorXRegs1024 : Predicate<"!Subtarget->hasVendorXRegs1024()">;
+
 def FeatureVendorXVentanaCondOps
     : RISCVExtension<1, 0, "Ventana Conditional Ops">;
 def HasVendorXVentanaCondOps : Predicate<"Subtarget->hasVendorXVentanaCondOps()">,
