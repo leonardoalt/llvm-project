@@ -491,14 +491,21 @@ void RISCVMCCodeEmitter::encodeInstruction(const MCInst &MI,
   case 4: {
     uint32_t Bits = getBinaryCodeForInstr(MI, Fixups, STI);
 
-    // XRegs1024: re-encode 32-bit instructions as 64-bit with 10-bit register
-    // fields. This allows registers >31 to be encoded correctly.
+    // XRegs1024: re-encode as 64-bit (2 x u32) with a FIXUP-COMPATIBLE design.
+    //
+    // Low u32: keeps immediate bits at STANDARD RISC-V positions so that
+    //   existing fixups (fixup_riscv_branch, fixup_riscv_jal, etc.) work
+    //   without modification. Register fields hold the LOW 5 bits.
+    //   bits[6:0] = 0b0111111 (64-bit marker, replaces opcode).
+    //
+    // High u32: carries the actual opcode and HIGH 5 bits of register IDs.
+    //   bits[16:10] = original 7-bit opcode
+    //   bits[21:17] = rd high bits (bits 9:5 of 10-bit rd)
+    //   bits[26:22] = rs1 high bits
+    //   bits[31:27] = rs2 high bits
+    //
+    // The transpiler reconstructs: reg = high[4:0] << 5 | low[4:0]
     if (STI.hasFeature(RISCV::FeatureVendorXRegs1024)) {
-      unsigned Format = RISCVII::getFormat(Desc.TSFlags);
-      uint32_t opcode7 = Bits & 0x7F;
-      uint32_t funct3 = (Bits >> 12) & 0x7;
-      uint32_t funct7 = (Bits >> 25) & 0x7F;
-
       // Get full 10-bit register encodings from MCInst operands
       auto getRegEnc = [&](unsigned OpIdx) -> uint32_t {
         if (OpIdx < MI.getNumOperands() && MI.getOperand(OpIdx).isReg())
@@ -507,106 +514,77 @@ void RISCVMCCodeEmitter::encodeInstruction(const MCInst &MI,
         return 0;
       };
 
-      // Extract immediate from 32-bit encoding (format-dependent)
-      uint64_t Bits64 = 0;
-      Bits64 |= 0x3Full;  // [6:0] = 0111111 (64-bit marker)
+      unsigned Format = RISCVII::getFormat(Desc.TSFlags);
+      uint32_t opcode7 = Bits & 0x7F;
 
+      // Low u32: standard encoding with [6:0] replaced by 0x3F marker
+      uint32_t Lo = (Bits & ~0x7Fu) | 0x3F;
+
+      // High u32: opcode + register high bits
+      uint32_t Hi = 0;
+      Hi |= (opcode7 << 10);  // [16:10] = original opcode
+
+      // Extract register high bits based on format
       switch (Format) {
-      case RISCVII::InstFormatR: {
-        // Operands: rd, rs1, rs2
+      case RISCVII::InstFormatR:
+      case RISCVII::InstFormatR4: {
         uint32_t rd  = getRegEnc(0);
         uint32_t rs1 = getRegEnc(1);
         uint32_t rs2 = getRegEnc(2);
-        Bits64 |= (uint64_t)opcode7 << 10;
-        Bits64 |= (uint64_t)rd << 17;
-        Bits64 |= (uint64_t)funct3 << 27;
-        Bits64 |= (uint64_t)rs1 << 30;
-        Bits64 |= (uint64_t)rs2 << 40;
-        Bits64 |= (uint64_t)funct7 << 57;
+        // Put low 5 bits in standard positions of Lo
+        Lo = (Lo & ~(0x1F << 7))  | ((rd & 0x1F) << 7);
+        Lo = (Lo & ~(0x1F << 15)) | ((rs1 & 0x1F) << 15);
+        Lo = (Lo & ~(0x1F << 20)) | ((rs2 & 0x1F) << 20);
+        // High 5 bits in Hi
+        Hi |= ((rd >> 5) & 0x1F) << 17;
+        Hi |= ((rs1 >> 5) & 0x1F) << 22;
+        Hi |= ((rs2 >> 5) & 0x1F) << 27;
         break;
       }
       case RISCVII::InstFormatI: {
-        // Operands: rd, rs1, imm12
         uint32_t rd  = getRegEnc(0);
         uint32_t rs1 = getRegEnc(1);
-        uint32_t imm12 = (Bits >> 20) & 0xFFF;
-        Bits64 |= (uint64_t)opcode7 << 10;
-        Bits64 |= (uint64_t)rd << 17;
-        Bits64 |= (uint64_t)funct3 << 27;
-        Bits64 |= (uint64_t)rs1 << 30;
-        Bits64 |= (uint64_t)imm12 << 52;
+        Lo = (Lo & ~(0x1F << 7))  | ((rd & 0x1F) << 7);
+        Lo = (Lo & ~(0x1F << 15)) | ((rs1 & 0x1F) << 15);
+        Hi |= ((rd >> 5) & 0x1F) << 17;
+        Hi |= ((rs1 >> 5) & 0x1F) << 22;
         break;
       }
       case RISCVII::InstFormatS: {
-        // Operands: rs2, rs1, imm12
+        // MCInst operands: rs2, rs1, imm
         uint32_t rs2 = getRegEnc(0);
         uint32_t rs1 = getRegEnc(1);
-        uint32_t imm_lo = (Bits >> 7) & 0x1F;
-        uint32_t imm_hi = (Bits >> 25) & 0x7F;
-        Bits64 |= (uint64_t)opcode7 << 10;
-        Bits64 |= (uint64_t)imm_lo << 22;  // imm[4:0] in rd slot
-        Bits64 |= (uint64_t)funct3 << 27;
-        Bits64 |= (uint64_t)rs1 << 30;
-        Bits64 |= (uint64_t)rs2 << 40;
-        Bits64 |= (uint64_t)imm_hi << 57;  // imm[11:5] in funct7 slot
+        Lo = (Lo & ~(0x1F << 15)) | ((rs1 & 0x1F) << 15);
+        Lo = (Lo & ~(0x1F << 20)) | ((rs2 & 0x1F) << 20);
+        Hi |= ((rs1 >> 5) & 0x1F) << 22;
+        Hi |= ((rs2 >> 5) & 0x1F) << 27;
         break;
       }
       case RISCVII::InstFormatB: {
-        // Operands: rs1, rs2, imm
+        // MCInst operands: rs1, rs2, imm
         uint32_t rs1 = getRegEnc(0);
         uint32_t rs2 = getRegEnc(1);
-        // Reconstruct 12-bit branch immediate from 32-bit encoding
-        uint32_t imm12 = ((Bits >> 7) & 0x1E)   // imm[4:1]
-                       | ((Bits >> 20) & 0x7E0)  // imm[10:5]
-                       | ((Bits << 4) & 0x800)   // imm[11]
-                       | ((Bits >> 19) & 0x1000); // imm[12]
-        // Re-encode branch imm in 64-bit format
-        Bits64 |= (uint64_t)opcode7 << 10;
-        Bits64 |= (uint64_t)(imm12 & 0x1E) << 22;    // imm[4:1] at [26:23]
-        Bits64 |= (uint64_t)((imm12 >> 11) & 1) << 22; // imm[11] at [22]
-        Bits64 |= (uint64_t)funct3 << 27;
-        Bits64 |= (uint64_t)rs1 << 30;
-        Bits64 |= (uint64_t)rs2 << 40;
-        Bits64 |= (uint64_t)((imm12 >> 5) & 0x3F) << 57; // imm[10:5] at [62:57]
-        Bits64 |= (uint64_t)((imm12 >> 12) & 1) << 63;   // imm[12] at [63]
+        Lo = (Lo & ~(0x1F << 15)) | ((rs1 & 0x1F) << 15);
+        Lo = (Lo & ~(0x1F << 20)) | ((rs2 & 0x1F) << 20);
+        Hi |= ((rs1 >> 5) & 0x1F) << 22;
+        Hi |= ((rs2 >> 5) & 0x1F) << 27;
         break;
       }
-      case RISCVII::InstFormatU: {
-        // Operands: rd, imm20
-        uint32_t rd = getRegEnc(0);
-        uint32_t imm20 = (Bits >> 12) & 0xFFFFF;
-        Bits64 |= (uint64_t)opcode7 << 10;
-        Bits64 |= (uint64_t)rd << 17;
-        Bits64 |= (uint64_t)imm20 << 27;
-        break;
-      }
+      case RISCVII::InstFormatU:
       case RISCVII::InstFormatJ: {
-        // Operands: rd, imm20
         uint32_t rd = getRegEnc(0);
-        // Reconstruct 20-bit jump immediate
-        uint32_t imm20 = ((Bits >> 21) & 0x3FF)   // imm[10:1]
-                       | ((Bits >> 9) & 0x800)     // imm[11]
-                       | (Bits & 0xFF000)           // imm[19:12]
-                       | ((Bits >> 11) & 0x100000); // imm[20]
-        Bits64 |= (uint64_t)opcode7 << 10;
-        Bits64 |= (uint64_t)rd << 17;
-        // Store imm20 shuffled in 64-bit format
-        Bits64 |= (uint64_t)((imm20 >> 11) & 0xFF) << 27; // imm[18:11]
-        Bits64 |= (uint64_t)((imm20 >> 10) & 1) << 35;    // imm[11]...
-        // Actually, let's just store imm20 straight at bits[46:27]
-        Bits64 &= ~(0xFFFFFull << 27); // clear
-        Bits64 |= (uint64_t)imm20 << 27;
+        Lo = (Lo & ~(0x1F << 7)) | ((rd & 0x1F) << 7);
+        Hi |= ((rd >> 5) & 0x1F) << 17;
         break;
       }
       default:
-        // For other formats (Pseudo, etc.), emit as-is with padding
-        support::endian::write(CB, Bits, llvm::endianness::little);
-        // Pad to 8 bytes for consistent PC stepping
-        support::endian::write<uint32_t>(CB, 0, llvm::endianness::little);
-        ++MCNumEmitted;
-        return;
+        // Unknown format: emit 32-bit + 4-byte padding
+        Hi |= (opcode7 << 10);
+        break;
       }
-      support::endian::write(CB, Bits64, llvm::endianness::little);
+
+      support::endian::write(CB, Lo, llvm::endianness::little);
+      support::endian::write(CB, Hi, llvm::endianness::little);
       ++MCNumEmitted;
       return;
     }
