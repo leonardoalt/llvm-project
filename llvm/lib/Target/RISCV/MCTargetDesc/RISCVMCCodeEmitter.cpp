@@ -194,10 +194,25 @@ void RISCVMCCodeEmitter::expandFunctionCall(const MCInst &MI,
     return;
   }
   // Emit AUIPC Ra, Func with R_RISCV_CALL relocation type.
-  // For XRegs1024: emit as standard 32-bit (NOT re-encoded). The linker's
-  // R_RISCV_CALL_PLT fixup requires AUIPC+JALR at consecutive 4-byte offsets.
-  // The standard Rv32I transpiler handles these 32-bit instructions in the
-  // mixed stream, and the PHANTOM gap approach keeps ELF addresses = PC addresses.
+  // For XRegs1024: keep as standard 32-bit for R_RISCV_CALL_PLT compatibility,
+  // but pad each to 8 bytes so every instruction occupies exactly 8 bytes
+  // (matching PC_STEP=8). The linker fixup patches bytes 0-3 (AUIPC) and 4-7 (JALR),
+  // where bytes 4-7 are in the padding of AUIPC. Wait — that breaks the fixup.
+  // Actually: R_RISCV_CALL_PLT patches AUIPC at offset 0 and JALR at offset 4.
+  // If we pad AUIPC to 8 bytes, JALR starts at offset 8, not 4. Broken.
+  //
+  // Solution: emit AUIPC+JALR as consecutive 4-byte instructions (offsets 0 and 4)
+  // with 8 bytes of padding after the pair. Total = 16 bytes = 2 × 8-byte slots.
+  // The transpiler reads:
+  //   slot 0: AUIPC(4 bytes) + JALR(4 bytes) → decode both, emit 2 instructions
+  //   slot 1: padding (8 bytes of zeros) → emit NOP
+  // But the transpiler produces 2 instructions for 1 slot... that's 2 PC slots for
+  // 8 bytes, same as PC_STEP=4 with 2 slots. Not what we want.
+  //
+  // Better: emit AUIPC+JALR as 8 contiguous bytes (no padding). The fixup works
+  // because they're at offsets 0 and 4 within those 8 bytes. The transpiler reads
+  // 2 u32s (8 bytes), detects AUIPC opcode in the first u32, and produces a
+  // single "call" instruction from the pair.
   TmpInst = MCInstBuilder(RISCV::AUIPC).addReg(Ra).addExpr(CallExpr);
   Binary = getBinaryCodeForInstr(TmpInst, Fixups, STI);
   support::endian::write(CB, Binary, llvm::endianness::little);
