@@ -194,19 +194,13 @@ void RISCVMCCodeEmitter::expandFunctionCall(const MCInst &MI,
     return;
   }
   // Emit AUIPC Ra, Func with R_RISCV_CALL relocation type.
+  // For XRegs1024: emit as standard 32-bit (NOT re-encoded). The linker's
+  // R_RISCV_CALL_PLT fixup requires AUIPC+JALR at consecutive 4-byte offsets.
+  // The standard Rv32I transpiler handles these 32-bit instructions in the
+  // mixed stream, and the PHANTOM gap approach keeps ELF addresses = PC addresses.
   TmpInst = MCInstBuilder(RISCV::AUIPC).addReg(Ra).addExpr(CallExpr);
   Binary = getBinaryCodeForInstr(TmpInst, Fixups, STI);
-  if (STI.hasFeature(RISCV::FeatureVendorXRegs1024)) {
-    // Re-encode as 64-bit: replace opcode with 0x3F marker
-    uint32_t Lo = (Binary & ~0x7Fu) | 0x3F;
-    uint32_t RaEnc = Ctx.getRegisterInfo()->getEncodingValue(Ra);
-    Lo = (Lo & ~(0x1F << 7)) | ((RaEnc & 0x1F) << 7);
-    support::endian::write(CB, Lo, llvm::endianness::little);
-    uint32_t Hi = (0x17u << 10) | (((RaEnc >> 5) & 0x1F) << 17);
-    support::endian::write(CB, Hi, llvm::endianness::little);
-  } else {
-    support::endian::write(CB, Binary, llvm::endianness::little);
-  }
+  support::endian::write(CB, Binary, llvm::endianness::little);
 
   if (MI.getOpcode() == RISCV::PseudoTAIL ||
       MI.getOpcode() == RISCV::PseudoJump)
@@ -216,22 +210,7 @@ void RISCVMCCodeEmitter::expandFunctionCall(const MCInst &MI,
     // Emit JALR Ra, Ra, 0
     TmpInst = MCInstBuilder(RISCV::JALR).addReg(Ra).addReg(Ra).addImm(0);
   Binary = getBinaryCodeForInstr(TmpInst, Fixups, STI);
-  if (STI.hasFeature(RISCV::FeatureVendorXRegs1024)) {
-    MCRegister Rd = TmpInst.getOperand(0).getReg();
-    MCRegister Rs1 = TmpInst.getOperand(1).getReg();
-    uint32_t RdEnc = Ctx.getRegisterInfo()->getEncodingValue(Rd);
-    uint32_t Rs1Enc = Ctx.getRegisterInfo()->getEncodingValue(Rs1);
-    uint32_t Lo = (Binary & ~0x7Fu) | 0x3F;
-    Lo = (Lo & ~(0x1F << 7)) | ((RdEnc & 0x1F) << 7);
-    Lo = (Lo & ~(0x1F << 15)) | ((Rs1Enc & 0x1F) << 15);
-    support::endian::write(CB, Lo, llvm::endianness::little);
-    uint32_t Hi = (0x67u << 10);
-    Hi |= ((RdEnc >> 5) & 0x1F) << 17;
-    Hi |= ((Rs1Enc >> 5) & 0x1F) << 22;
-    support::endian::write(CB, Hi, llvm::endianness::little);
-  } else {
-    support::endian::write(CB, Binary, llvm::endianness::little);
-  }
+  support::endian::write(CB, Binary, llvm::endianness::little);
 }
 
 void RISCVMCCodeEmitter::expandTLSDESCCall(const MCInst &MI,
