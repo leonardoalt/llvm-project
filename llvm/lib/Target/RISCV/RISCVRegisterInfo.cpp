@@ -788,6 +788,9 @@ RISCVRegisterInfo::getCallPreservedMask(const MachineFunction & MF,
                                         CallingConv::ID CC) const {
   auto &Subtarget = MF.getSubtarget<RISCVSubtarget>();
 
+  // XRegs1024: only X1 (ra) is preserved across calls.
+  if (Subtarget.hasVendorXRegs1024())
+    return CSR_IPRA_RegMask;
   if (CC == CallingConv::GHC)
     return CSR_NoRegs_RegMask;
   RISCVABI::ABI ABI = Subtarget.getTargetABI();
